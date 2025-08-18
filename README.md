@@ -1,0 +1,2 @@
+# nonebot_plugin_werewolf_nightfall
+nonebot 狼人杀插件
