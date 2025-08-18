@@ -11,7 +11,7 @@ from nonebot_plugin_alconna.uniseg import Receipt, Target, UniMessage
 from nonebot_plugin_uninfo import Interface, SceneType
 
 from .config import stop_command_prompt
-from .constant import STOP_COMMAND
+from .constant import FAKE_USER_ID_START, STOP_COMMAND
 from .models import KillInfo, KillReason, Role, RoleGroup
 from .utils import (
     InputStore,
@@ -21,6 +21,7 @@ from .utils import (
     check_index,
     link,
 )
+from typing import cast
 
 if TYPE_CHECKING:
     from .game import Game
@@ -247,6 +248,14 @@ class Player:
         select_players: "PlayerSet | None" = None,
         skip_handler: bool = False,
     ) -> Receipt:
+
+        # 如果是测试模式，并且目标是机器人玩家，则跳过实际发送
+        if self.game.is_test and self.user_id.startswith(str(FAKE_USER_ID_START)[:5]):
+            self.log(f"<g>Send (Mocked)</g> | {escape_tag(str(message))}")
+            # 返回一个假的 Receipt 对象来防止后续代码出错
+            from nonebot_plugin_alconna.uniseg.receipt import Receipt
+            return cast(Receipt, None)
+
         if isinstance(message, str):
             message = UniMessage.text(message)
 

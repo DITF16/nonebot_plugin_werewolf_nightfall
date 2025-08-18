@@ -51,9 +51,11 @@ class WitchInteractProvider(InteractProvider["Witch"]):
 
     @override
     async def interact(self) -> None:
+        # 检查是否使用了解药。如果使用了，则回合结束。
         if await self.handle_killed():
             return
 
+        # 如果没有解药可用，检查是否有毒药。
         if not self.poison:
             await self.p.send("⚙️你没有可以使用的药水，回合结束")
             return

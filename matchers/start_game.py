@@ -1,7 +1,7 @@
 import json
-
 import anyio
-from nonebot.rule import to_me
+from nonebot.internal.matcher import current_bot
+from nonebot.rule import Rule, to_me
 from nonebot.typing import T_State
 from nonebot_plugin_alconna import (
     Alconna,
@@ -10,10 +10,12 @@ from nonebot_plugin_alconna import (
     Option,
     Target,
     UniMessage,
+    UniMsg,
     on_alconna,
 )
 from nonebot_plugin_localstore import get_plugin_data_file
 from nonebot_plugin_uninfo import QryItrface, Uninfo
+import nonebot_plugin_waiter.unimsg as waiter
 
 from ..config import GameBehavior, config, stop_command_prompt
 from ..game import Game, get_running_games
@@ -112,10 +114,69 @@ async def handle_start(
     admin_name = extract_session_member_nick(session) or admin_id
     players[admin_id] = admin_name
 
+    prepare_game = PrepareGame(admin_id, players)
     with anyio.move_on_after(GameBehavior.get().timeout.prepare) as scope:
-        await PrepareGame(admin_id, players).run()
+        await prepare_game.run()
     if scope.cancelled_caught:
         await UniMessage.text("⚠️游戏准备超时，已自动结束").finish(reply_to=True)
+
+    if not prepare_game.shoud_start_game:
+        return
+
+    bot = current_bot.get()
+    await UniMessage.text("游戏即将开始，正在进行私聊连通性测试...").send(target)
+
+    while True:
+        failed_players = {}
+        for user_id, user_name in players.items():
+            private_target = Target(
+                user_id,
+                private=True,
+                self_id=bot.self_id,
+                scope=target.scope,
+                adapter=target.adapter,
+                extra=target.extra,
+            )
+            try:
+                test_msg = UniMessage.text(
+                    "【狼人杀】私聊连通性测试，收到此消息说明您可以正常进行游戏。"
+                )
+                await test_msg.send(private_target, bot)
+                await anyio.sleep(0.5)
+            except Exception:
+                failed_players[user_id] = user_name
+
+        if not failed_players:
+            break
+
+        error_msg = UniMessage.text("以下玩家私聊发送失败，请添加机器人为好友或检查私聊设置：\n")
+        for user_id, user_name in failed_players.items():
+            error_msg.at(user_id).text(f" {user_name}\n")
+        error_msg.text("\n问题解决后，请游戏发起者发送“重试”继续。")
+        await error_msg.send(target)
+
+        @waiter.waiter(
+            waits=["message"],
+            keep_session=False,
+            rule=Rule(lambda event: event.get_user_id() == admin_id),
+        )
+        def wait_retry(msg: UniMsg):
+            return msg.extract_plain_text().strip()
+
+        try:
+            with anyio.fail_after(GameBehavior.get().timeout.prepare):
+                while True:
+                    retry_cmd = wait_retry()
+                    if retry_cmd == "重试":
+                        break
+                    if retry_cmd == "取消":
+                        await UniMessage.text("游戏发起者取消了游戏。").send(target)
+                        return
+        except TimeoutError:
+            await UniMessage.text("⚠️等待重试超时，游戏创建已取消。").send(target)
+            return
+
+    await UniMessage.text("✅所有玩家私聊测试通过，正在分配身份...").send(target)
 
     dump_players(target, players)
     game = await Game.new(target, set(players), interface)

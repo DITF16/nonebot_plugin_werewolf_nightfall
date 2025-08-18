@@ -12,6 +12,7 @@ from nonebot_plugin_alconna.uniseg.receipt import Receipt
 from nonebot_plugin_uninfo import Interface, Scene, SceneType
 
 from .config import GameBehavior, PresetData
+from .constant import FAKE_USER_ID_START
 from .dead_channel import DeadChannel
 from .exception import GameFinished
 from .models import GameContext, GameStatus, KillInfo, KillReason, Role, RoleGroup
@@ -88,6 +89,7 @@ class Game:
         self._scene: Scene | None = None
         self._finished = self._task_group = None
         self._send_handler = _SendHandler(group)
+        self.is_test: bool = False
 
     @final
     @classmethod
@@ -130,6 +132,18 @@ class Game:
     ) -> Receipt:
         if isinstance(message, str):
             message = UniMessage.text(message)
+
+        # --- 在此处拦截并替换所有对机器人的@ ---
+        if self.is_test:
+            new_message = UniMessage()
+            for seg in message:
+                if isinstance(seg, At) and seg.target.startswith(str(FAKE_USER_ID_START)[:5]):
+                    player_name = self._player_map.get(seg.target, Player(self, Target(seg.target))).name
+                    new_message.text(f"@{player_name}")
+                else:
+                    new_message.append(seg)
+            message = new_message
+
 
         text = ["<g>Send</g> | "]
         for seg in message:

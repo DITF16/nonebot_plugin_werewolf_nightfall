@@ -66,3 +66,5 @@ DEFAULT_PRIESTHOOD_PRIORITY: list[Role] = [
     Role.GUARD,
     Role.IDIOT,
 ]
+# 用于测试工具的机器人玩家起始虚拟ID
+FAKE_USER_ID_START = 1000000000
