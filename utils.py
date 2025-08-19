@@ -1,7 +1,7 @@
 import abc
 import functools
 import itertools
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, ParamSpec, TypeVar
 
@@ -65,8 +65,13 @@ class _InputTask:
 
 
 class InputStore:
-    locks: ClassVar[dict[str, anyio.Lock]] = defaultdict(anyio.Lock)
+    """
+    经过优化的输入存储，用于处理玩家消息。
+    增加了输入缓冲区以防止因玩家连续发送消息而导致死锁。
+    """
+    locks: ClassVar[defaultdict[str, anyio.Lock]] = defaultdict(anyio.Lock)
     tasks: ClassVar[dict[str, _InputTask]] = {}
+    buffers: ClassVar[defaultdict[str, deque[UniMessage]]] = defaultdict(deque)
 
     @staticmethod
     def _key(user_id: str, group_id: str | None) -> str:
@@ -76,10 +81,17 @@ class InputStore:
     async def fetch(cls, user_id: str, group_id: str | None = None) -> UniMessage[Any]:
         key = cls._key(user_id, group_id)
         async with cls.locks[key]:
-            cls.tasks[key] = task = _InputTask()
+            # 优先从缓冲区获取消息
+            if cls.buffers[key]:
+                return cls.buffers[key].popleft()
+
+            # 如果缓冲区为空，则创建任务等待新消息
+            task = _InputTask()
+            cls.tasks[key] = task
             try:
                 return await task.wait()
             finally:
+                # 确保任务被移除，即使出现异常
                 cls.tasks.pop(key, None)
 
     @classmethod
@@ -92,8 +104,12 @@ class InputStore:
     @classmethod
     def put(cls, msg: UniMessage, user_id: str, group_id: str | None = None) -> None:
         key = cls._key(user_id, group_id)
+        # 尝试唤醒正在等待的任务
         if task := cls.tasks.pop(key, None):
             task.set(msg)
+        else:
+            # 如果没有任务在等待，则将消息存入缓冲区
+            cls.buffers[key].append(msg)
 
     @classmethod
     def cleanup(cls, players: Iterable[str], group_id: str) -> None:
@@ -103,6 +119,8 @@ class InputStore:
                 del cls.locks[key]
             if key in cls.tasks:
                 del cls.tasks[key]
+            if key in cls.buffers:
+                del cls.buffers[key]
 
 
 @functools.cache
